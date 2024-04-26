@@ -15,8 +15,6 @@ from tqdm import tqdm
   
 import wandb
 import argparse
-
-import matplotlib.pyplot as plt
 import seaborn as sns
 
 
@@ -31,11 +29,11 @@ def reparameterize(z_mean, z_log_var):
 
 # ELBO loss calculation
 def elbo_loss(true, pred, z_mean, z_log_var):
-    true = true.view(-1, 501 * 1501 * 3)
+    true = true.view(-1, 501 * 1501 * 6)
 
     # flatten
-    x_mu = pred[:, :501 * 1501 * 3]
-    x_log_var = pred[:, 501 * 1501 * 3:]
+    x_mu = pred[:, :501 * 1501 * 6]
+    x_log_var = pred[:, 501 * 1501 * 6:]
 
     x_mu = x_mu.type(torch.float64)
     x_log_var = x_log_var.type(torch.float64)
@@ -43,7 +41,7 @@ def elbo_loss(true, pred, z_mean, z_log_var):
     # Gaussian reconstruction loss
     mse = -0.5 * torch.sum(torch.square(true - x_mu) / torch.exp(x_log_var), dim=1)
     var_trace = -0.5 * torch.sum(x_log_var, dim=1)
-    log2pi = -0.5 * 501 * 1501 * 3 * np.log(2 * np.pi)
+    log2pi = -0.5 * 501 * 1501 * 6 * np.log(2 * np.pi)
     log_likelihood = mse + var_trace + log2pi
     reconstruction_loss = -log_likelihood
 
@@ -66,7 +64,7 @@ def kl_loss(z_mean, z_log_var):
 def kl_reconstruction_loss(kl_weight):
     def _kl_reconstruction_loss(ouput, true):
         # flatten
-        flattened_size = 501 * 1501 * 3
+        flattened_size = 501 * 1501 * 6
         z_mean, z_log_var, pred = ouput
         # reshape true and pred
         true = true.view(-1, flattened_size)
@@ -98,7 +96,7 @@ def categorical_crossentropy(y_true, y_pred):
 
 def reconstruction(true, pred):
     # Shape for each time step: 501 * 1501 * 2
-    flattened_size = 501 * 1501 * 3
+    flattened_size = 501 * 1501 * 6
     true = true.view(-1, flattened_size)
 
     x_mu = pred[:, :flattened_size]
@@ -167,11 +165,11 @@ class Decoder(nn.Module):
                                                   output_padding=1)
         self.conv_transpose4 = nn.ConvTranspose2d(128, 64, kernel_size=(3, 3), stride=(2, 2), padding=1,
                                                   output_padding=1)
-        self.conv_transpose_x_mu = nn.ConvTranspose2d(64, 2, kernel_size=(3, 3), stride=(2, 2), padding=1,
+        self.conv_transpose_x_mu = nn.ConvTranspose2d(64, 6, kernel_size=(3, 3), stride=(2, 2), padding=1,
                                                       output_padding=1)
-        self.conv_transpose_log_var = nn.ConvTranspose2d(64, 2, kernel_size=(3, 3), stride=(2, 2), padding=1,
+        self.conv_transpose_log_var = nn.ConvTranspose2d(64, 6, kernel_size=(3, 3), stride=(2, 2), padding=1,
                                                          output_padding=1)
-        #
+        
         self.adaptive_pool = nn.AdaptiveAvgPool2d((501, 1501))
 
     def forward(self, x):
@@ -265,13 +263,16 @@ def train_vae(vae_model, train_loader, test_loader, optimizer, criterion, epochs
     test_loss_list = []
     test_kl_loss_list = []
     test_reconstruction_loss_list = []
+
     for epoch in range(epochs):
         total_loss = 0
         total_kl = 0
         total_reconstruction_loss = 0
+
         loop = tqdm(train_loader, total=len(train_loader))
         for inputs, labels in loop:
             # Forward pass
+            inputs, labels = inputs.to(device), labels.to(device)
             outputs = vae_model(inputs)
 
             # Calculate loss
@@ -291,11 +292,13 @@ def train_vae(vae_model, train_loader, test_loader, optimizer, criterion, epochs
         train_kl_loss_list.append(total_kl / len(train_loader))
         train_reconstruction_loss_list.append(total_reconstruction_loss / len(train_loader))
         # Test
-
+        vae_model.eval()
         total_loss = 0.
         total_kl = 0
         total_reconstruction_loss = 0
         for inputs, labels in test_loader:
+
+            inputs, labels = inputs.to(device), labels.to(device)
             # Forward pass
             outputs = vae_model(inputs)
 
@@ -324,10 +327,10 @@ def train_vae(vae_model, train_loader, test_loader, optimizer, criterion, epochs
     test_loss_list, test_kl_loss_list, test_reconstruction_loss_list)
 
 
-# Get middle output from the encoder
+# Get middle output from the encode
 def get_middle_output(encoder, data_loader):
     """Get middle layer output from the encoder"""
-    encoder.eval()  # Set to evaluation modehj
+    encoder.eval()  # Set to evaluation model
     outputs = []
 
     with torch.no_grad():  # Do not compute gradient
@@ -358,15 +361,16 @@ def train_and_get_hidden_state(train_data, test_data, input_channels, init_model
     # 转换为 PyTorch 张量
     train_feature = torch.tensor(train_data, dtype=torch.float32)
     test_feature = torch.tensor(test_data, dtype=torch.float32)
+
     vae_train_dataset = TensorDataset(train_feature, train_feature)
-    vae_train_loader = DataLoader(vae_train_dataset, batch_size=1, shuffle=True)
+    vae_train_loader = DataLoader(vae_train_dataset, batch_size=16, shuffle=True)
     vae_test_dataset = TensorDataset(test_feature, test_feature)
-    vae_test_loader = DataLoader(vae_test_dataset, batch_size=1, shuffle=False)
+    vae_test_loader = DataLoader(vae_test_dataset, batch_size=16, shuffle=False)
     
-    vae_model = VAEModel(input_channels=6)
+    vae_model = VAEModel(input_channels=6).to(device)
     if init_model_path==None:
         optimizer_vae = optim.Adam(vae_model.parameters(), lr=1e-3)
-        criterion_vae = kl_reconstruction_loss(0.5)
+        criterion_vae = kl_reconstruction_loss(0.05)
         train_vae(vae_model,vae_train_loader,vae_test_loader,optimizer_vae,criterion_vae,epochs=1)
         torch.save(vae_model.state_dict(), save_model_path)
     else:
@@ -376,6 +380,7 @@ def train_and_get_hidden_state(train_data, test_data, input_channels, init_model
     hidden_feature_list = []
     with torch.no_grad():
         for data in torch.cat([train_feature, test_feature], dim=0):
+            data = data.to(device)
             #_,_,hidden_feature = vae_model.encoder(feature[i:i+1])
             _, _, hidden_feature = vae_model.encoder(data.unsqueeze(0))
             hidden_feature_list.append(hidden_feature)
@@ -390,7 +395,7 @@ def train_k_means(file1,file2,file3):
     
     hidden_feature = torch.cat([hidden_feature1, hidden_feature2, hidden_feature3], dim=1)
     hidden_feature = torch.split(hidden_feature,1,dim=0)
-    hidden_feature =[i.squeeze(0).numpy().tolist() for i in hidden_feature]
+    hidden_feature =[i.squeeze(0).cpu().numpy().tolist() for i in hidden_feature]
     # train_hidden_feature = hidden_feature[:96]
     # test_hidden_feature = hidden_feature[96:]
     
@@ -443,71 +448,89 @@ def save_normalization_params(output_dir, min_val, max_val):
 
 
 def main():
-    root_dir = '/project/caiman_datasets'
-    output_dir = '/project/normalized_data'
-    train_months = ['Jan2011', 'Feb2011', 'March2011', 'April2011', 'May2011']#'July2011', 'August2011', 'September2011'
-    test_months = ['June2011']#'October2011'，'November2011', 'December2011'
+    
+#     root_dir = '/project/caiman_datasets'
+#     output_dir = '/project/normalized_data'
+#     train_months = ['Jan2011', 'March2011']#'July2011', 'August2011', 'September2011' 'April2011', 'May2011'
+#     test_months = ['Feb2011']#'October2011'，'November2011', 'December2011'
  
-   # 初始化归一化参数
-    min_val = {'omega': np.inf, 'temp': np.inf, 'qv': np.inf}
-    max_val = {'omega': -np.inf, 'temp': -np.inf, 'qv': -np.inf}
-    # 计算训练数据的最小最大值
-    for month in train_months:
-        month_dir = os.path.join(root_dir, month)
-        for file_path in glob.glob(os.path.join(month_dir, '*.nc')):
-            with xr.open_dataset(file_path) as data:
-                for variable in ['omega', 'temp', 'qv']:
-                    values = data[variable].values
-                    min_val[variable] = np.minimum(min_val[variable], np.min(values))
-                    max_val[variable] = np.maximum(max_val[variable], np.max(values))
+#    # 初始化归一化参数
+#     min_val = {'omega': np.inf, 'temp': np.inf, 'qv': np.inf}
+#     max_val = {'omega': -np.inf, 'temp': -np.inf, 'qv': -np.inf}
+#     #计算训练数据的最小最大值
+#     for month in train_months:
+#         month_dir = os.path.join(root_dir, month)
+#         for file_path in glob.glob(os.path.join(month_dir, '*.nc')):
+#             with xr.open_dataset(file_path) as data:
+#                 for variable in ['omega', 'temp', 'qv']:
+#                     values = data[variable].values
+#                     min_val[variable] = np.minimum(min_val[variable], np.min(values))
+#                     max_val[variable] = np.maximum(max_val[variable], np.max(values))
 
-    # 保存归一化参数
-    save_normalization_params(output_dir, min_val, max_val)
+#     #保存归一化参数
+#     save_normalization_params(output_dir, min_val, max_val)
 
-    # 不再计算归一化参数，直接加载
-    min_val = {}
-    max_val = {}
-    for variable in ['omega', 'temp', 'qv']:
-        min_val[variable] = np.load(os.path.join(output_dir, f'min_{variable}.npy'))
-        max_val[variable] = np.load(os.path.join(output_dir, f'max_{variable}.npy'))
+#     #不再计算归一化参数，直接加载
+#     min_val = {}
+#     max_val = {}
+#     for variable in ['omega', 'temp', 'qv']:
+#         min_val[variable] = np.load(os.path.join(output_dir, f'min_{variable}.npy'))
+#         max_val[variable] = np.load(os.path.join(output_dir, f'max_{variable}.npy'))
 
-    train_omega, train_temperature, train_humidity = [], [], []
-    test_omega, test_temperature, test_humidity = [], [], []
+#     train_omega, train_temperature, train_humidity = [], [], []
+#     test_omega, test_temperature, test_humidity = [], [], []
 
-    # 分别加载和归一化训练和测试数据，并更新列表
-    for month in tqdm(train_months, desc="Normalizing training data"):
-        month_dir = os.path.join(root_dir, month)
-        normalized_data = load_and_normalize_data(month_dir, min_val, max_val)
-        for file_name, data in normalized_data:  # 正确地解包元组
-            train_omega.append(data['omega'])  # 直接使用键访问
-            train_temperature.append(data['temp'])
-            train_humidity.append(data['qv'])
+#     # 分别加载和归一化训练和测试数据，并更新列表
+#     for month in tqdm(train_months, desc="Normalizing training data"):
+#         month_dir = os.path.join(root_dir, month)
+#         normalized_data = load_and_normalize_data(month_dir, min_val, max_val)
+#         for file_name, data in normalized_data:  # 正确地解包元组
+#             train_omega.append(data['omega'])  # 直接使用键访问
+#             train_temperature.append(data['temp'])
+#             train_humidity.append(data['qv'])
 
-    for month in tqdm(test_months, desc="Normalizing test data"):
-        month_dir = os.path.join(root_dir, month)
-        normalized_data = load_and_normalize_data(month_dir, min_val, max_val)
-        for file_name, data in normalized_data:
-            test_omega.append(data['omega'])
-            test_temperature.append(data['temp'])
-            test_humidity.append(data['qv'])
+#     for month in tqdm(test_months, desc="Normalizing test data"):
+#         month_dir = os.path.join(root_dir, month)
+#         normalized_data = load_and_normalize_data(month_dir, min_val, max_val)
+#         for file_name, data in normalized_data:
+#             test_omega.append(data['omega'])
+#             test_temperature.append(data['temp'])
+#             test_humidity.append(data['qv'])
+
+#     train_omega = np.array(train_omega)[:, 0, :, :]
+#     train_temperature = np.array(train_temperature)[:, 0, :, :]
+#     train_humidity = np.array(train_humidity)[:, 0, :, :]
+
+#     test_omega = np.array(test_omega)[:, 0, :, :]
+#     test_temperature = np.array(test_temperature)[:, 0, :, :]
+#     test_humidity = np.array(test_humidity)[:, 0, :, :]
+
+    train_omega = np.random.rand(250, 6, 501, 1501)
+    train_temperature = np.random.rand(250, 6, 501, 1501)
+    train_humidity = np.random.rand(250, 6, 501, 1501)
+
+    test_omega = np.random.rand(50, 6, 501, 1501)
+    test_temperature = np.random.rand(50, 6, 501, 1501)
+    test_humidity = np.random.rand(50, 6, 501, 1501)
+
 
     print("Training omega data shape:", np.array(train_omega).shape)
     print("Test temperature data shape:", np.array(test_temperature).shape)
 
-
-
     print("Data prepared and ready for training/testing.")
     # feature train
     train_and_get_hidden_state(train_omega, test_omega, 6, save_model_path='model_omega.pth', save_file_name='hidden_feature_omega.pt')
-    train_and_get_hidden_state(train_temperature, test_temperature, 6, save_model_path='model_temperature.pth', save_file_name='hidden_feature_temperature.pt')
-    train_and_get_hidden_state(train_humidity, test_humidity, 6, save_model_path='model_humidity.pth', save_file_name='hidden_feature_humidity.pt')
+    # train_and_get_hidden_state(train_temperature, test_temperature, 6, save_model_path='model_temperature.pth', save_file_name='hidden_feature_temperature.pt')
+    # train_and_get_hidden_state(train_humidity, test_humidity, 6, save_model_path='model_humidity.pth', save_file_name='hidden_feature_humidity.pt')
     
     # kmeans train
-    train_k_means('hidden_feature_omega.pt', 'hidden_feature_temperature.pt', 'hidden_feature_humidity.pt')
+    #train_k_means('hidden_feature_omega.pt', 'hidden_feature_temperature.pt', 'hidden_feature_humidity.pt')
 
     
 
 if __name__ == "__main__":
+    device = "cuda" if torch.cuda.is_available() else 'cpu'
+    print(device)
     main()
 
     # predict()
