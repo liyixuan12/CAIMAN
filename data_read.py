@@ -7,7 +7,10 @@ from tqdm import tqdm
 import glob
 
 def load_and_normalize_data(month_dir, min_val, max_val):
-    """加载数据，并使用提供的最小最大值进行归一化。返回归一化数据和原始数据列表。"""
+    """
+    Load data and normalize it using provided min and max values.
+    Returns normalized data and raw data lists.
+    """
     nc_files = glob.glob(os.path.join(month_dir, '*.nc'))
     normalized_data = []
     raw_data = []
@@ -24,7 +27,7 @@ def load_and_normalize_data(month_dir, min_val, max_val):
     return normalized_data, raw_data
 
 def plot_data_comparison(raw_data, normalized_data, variable, title, save_path):
-    """绘制原始数据和归一化数据的对比图。"""
+    """Plot comparison of raw and normalized data."""
     plt.figure(figsize=(12, 6))
     plt.subplot(121)
     sns.histplot(raw_data.flatten(), kde=True, color='blue', label='Original Data')
@@ -42,20 +45,19 @@ def plot_data_comparison(raw_data, normalized_data, variable, title, save_path):
     
     plt.suptitle(title)
     plt.tight_layout()
-    plt.savefig(save_path)  # 保存图像
-    plt.close()  # 关闭图形窗口，避免内存泄漏
+    plt.savefig(save_path)  # Save the image
+    plt.close()  # Close the figure window to avoid memory leaks
 
 def main():
     root_dir = '/workspace/caiman_datasets'
     output_dir = '/workspace/project_caiman/normalized_data'
     month = 'Jan2011'
-
     min_val = {}
     max_val = {}
     for variable in ['omega', 'temp', 'qv']:
         min_val[variable] = np.load(os.path.join(output_dir, f'min_{variable}.npy'))
         max_val[variable] = np.load(os.path.join(output_dir, f'max_{variable}.npy'))
-
+    
     month_dir = os.path.join(root_dir, month)
     normalized_data, raw_data = load_and_normalize_data(month_dir, min_val, max_val)
     
@@ -64,7 +66,7 @@ def main():
         norm_list = [data[variable] for data in normalized_data]
         flat_raw = np.concatenate(raw_list)
         flat_normalized = np.concatenate(norm_list)
-        save_path = os.path.join(output_dir, f'comparison_{variable}_{month}.png')  # 设置保存路径
+        save_path = os.path.join(output_dir, f'comparison_{variable}_{month}.png')  # Set save path
         plot_data_comparison(flat_raw, flat_normalized, variable, f'Comparison for {variable} in {month}', save_path)
 
 if __name__ == '__main__':
